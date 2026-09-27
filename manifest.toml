@@ -1,0 +1,157 @@
+schema_version = 1
+plugin_name = "smr"
+
+[image]
+reference = "ghcr.io/auto-nomics/autonomics/smr@sha256:40c0db3c71eda506913c376ab939027fff8ce8eb55c262fd1e5da2fe4c351b6d"
+tag = "1.4.2"
+upstream = "official SMR 1.4.2 Linux @ yanglab.westlake.edu.cn/software/smr/ (asset sha256 c01ef6a4c5d03c7d504e24b2ccf40ab4da56eb127295c7671c867048020f893c)"
+license = "MIT"
+
+# Superset panel family (ldsc-munge precedent): the v0 manifest DSL has
+# family-level panels only — every [[nodes]] entry sees every panel — and no
+# parameter-driven panel selection, so the legacy wrapper's `eqtl_source`
+# choice is expressed as two kinds instead: `smr_heidi` reads the Westra
+# BESD package and `smr_heidi_eqtlgen` reads the eQTLGen BESD package. The
+# two eQTL panels mount read-only at distinct paths, so they coexist
+# without conflict; each script consumes only its own package. The 1000G
+# EUR PLINK binary LD reference is shared by both kinds at the legacy mount.
+[[panels]]
+binding = "smr_eqtl_westra"
+mount = "/panels/smr_eqtl_westra"
+bundle = "wjixiang/catalog-smr-eqtl-westra-hg19"
+
+[[panels]]
+binding = "smr_eqtl_eqtlgen"
+mount = "/panels/smr_eqtl_eqtlgen"
+bundle = "wjixiang/catalog-smr-eqtl-eqtlgen-hg19"
+
+[[panels]]
+binding = "smr_ld_ref"
+mount = "/panels/smr_ld_ref"
+bundle = "wjixiang/catalog-plink-ref-1000g-eur-binary"
+
+[[nodes]]
+kind = "smr_heidi"
+desc = "Runs official SMR/HEIDI 1.4.2 against the Westra blood cis-eQTL BESD panel."
+doc = """
+Runs the official SMR v1.4.2 executable in an ephemeral container against
+the Westra blood cis-eQTL GRCh37 BESD package (the legacy default
+eqtl_source=westra). Input is one GCTA-COJO `.ma` GWAS summary File with
+columns SNP, A1, A2, freq, b, se, p, and n; A1/freq must refer to the same
+effect allele. The node mounts the immutable Westra BESD package plus the
+1000G EUR PLINK binary LD reference, analyzes one chromosome per
+invocation, and emits the official `.smr` result plus the complete
+execution log. For the eQTLGen cis-eQTL panel use the sibling kind
+`smr_heidi_eqtlgen`. Both eQTL panels and the LD reference are family
+panels and mount on every node of this plugin; each script reads only its
+own BESD package. The compatibility between the Westra image, BESD, and
+LD-reference versions is recorded in
+docs/container-node-migration-backlog.md.
+"""
+timeout_secs = 3600
+artifact_prefix = "/artifacts/smr_heidi"
+
+[nodes.ports]
+inputs = [{ type = "file" }]
+outputs = [
+  { path = "smr.smr", format = "smr_heidi" },
+  { path = "smr.log", format = "smr_log" },
+]
+
+[nodes.params]
+chr = { type = "int", doc = "Chromosome to analyze; the bound 1000G reference is chromosome-split", min = 1.0, max = 22.0 }
+maf = { type = "number", default = 0.01, exclusive_min = 0.0, max = 0.5, doc = "Minor allele frequency threshold in the LD reference sample" }
+peqtl_smr = { type = "number", default = 5e-8, exclusive_min = 0.0, max = 1.0, doc = "eQTL p-value threshold used to select the top instrument for SMR" }
+peqtl_heidi = { type = "number", default = 1.5654e-3, exclusive_min = 0.0, max = 1.0, doc = "eQTL p-value threshold used to select SNPs for HEIDI" }
+heidi_mtd = { type = "int", default = 1, min = 0.0, max = 1.0, doc = "HEIDI method: 0 is the original approach and 1 is the current default" }
+heidi_min_m = { type = "int", default = 3, exclusive_min = 0.0, doc = "Minimum number of cis-SNPs required to run HEIDI; must not exceed heidi_max_m" }
+heidi_max_m = { type = "int", default = 20, doc = "Maximum number of eQTLs used in HEIDI after LD pruning" }
+ld_lower_limit = { type = "number", default = 0.05, exclusive_min = 0.0, exclusive_max = 1.0, doc = "Lower LD r-squared pruning limit for HEIDI; must be below ld_upper_limit" }
+ld_upper_limit = { type = "number", default = 0.9, exclusive_min = 0.0, exclusive_max = 1.0, doc = "Upper LD r-squared pruning limit for HEIDI" }
+cis_wind_kb = { type = "int", default = 2000, exclusive_min = 0.0, doc = "cis-eQTL window centered on each probe, in kilobases" }
+max_num_ld = { type = "int", default = 500, min = 500.0, max = 10000.0, doc = "Number of top SNPs considered during HEIDI LD pruning" }
+diff_freq = { type = "number", default = 0.2, exclusive_min = 0.0, max = 1.0, doc = "Maximum allele-frequency difference allowed between datasets" }
+diff_freq_prop = { type = "number", default = 0.05, exclusive_min = 0.0, max = 1.0, doc = "Maximum proportion of SNPs that may be excluded by allele-frequency QC" }
+thread_num = { type = "int", default = 1, min = 1.0, max = 1024.0, doc = "OpenMP thread count used by SMR" }
+
+[nodes.command]
+interpreter = "sh"
+script_file = "scripts/smr_heidi.sh"
+
+[nodes.command.env]
+SMR_CHR = "{{ chr }}"
+SMR_MAF = "{{ maf }}"
+SMR_PEQTL_SMR = "{{ peqtl_smr }}"
+SMR_PEQTL_HEIDI = "{{ peqtl_heidi }}"
+SMR_HEIDI_MTD = "{{ heidi_mtd }}"
+SMR_HEIDI_MIN_M = "{{ heidi_min_m }}"
+SMR_HEIDI_MAX_M = "{{ heidi_max_m }}"
+SMR_LD_LOWER_LIMIT = "{{ ld_lower_limit }}"
+SMR_LD_UPPER_LIMIT = "{{ ld_upper_limit }}"
+SMR_CIS_WIND_KB = "{{ cis_wind_kb }}"
+SMR_MAX_NUM_LD = "{{ max_num_ld }}"
+SMR_DIFF_FREQ = "{{ diff_freq }}"
+SMR_DIFF_FREQ_PROP = "{{ diff_freq_prop }}"
+SMR_THREAD_NUM = "{{ thread_num }}"
+
+[[nodes]]
+kind = "smr_heidi_eqtlgen"
+desc = "Runs official SMR/HEIDI 1.4.2 against the eQTLGen cis-eQTL BESD panel."
+doc = """
+Runs the official SMR v1.4.2 executable in an ephemeral container against
+the eQTLGen GRCh37 cis-eQTL BESD package (the legacy
+eqtl_source=eqtlgen selection). Input is one GCTA-COJO `.ma` GWAS summary
+File with columns SNP, A1, A2, freq, b, se, p, and n; A1/freq must refer
+to the same effect allele. The node mounts the immutable eQTLGen BESD
+package plus the 1000G EUR PLINK binary LD reference, analyzes one
+chromosome per invocation, and emits the official `.smr` result plus the
+complete execution log. For the Westra blood cis-eQTL panel (the legacy
+default) use the sibling kind `smr_heidi`. Both eQTL panels and the LD
+reference are family panels and mount on every node of this plugin; each
+script reads only its own BESD package.
+"""
+timeout_secs = 3600
+artifact_prefix = "/artifacts/smr_heidi_eqtlgen"
+
+[nodes.ports]
+inputs = [{ type = "file" }]
+outputs = [
+  { path = "smr.smr", format = "smr_heidi" },
+  { path = "smr.log", format = "smr_log" },
+]
+
+[nodes.params]
+chr = { type = "int", doc = "Chromosome to analyze; the bound 1000G reference is chromosome-split", min = 1.0, max = 22.0 }
+maf = { type = "number", default = 0.01, exclusive_min = 0.0, max = 0.5, doc = "Minor allele frequency threshold in the LD reference sample" }
+peqtl_smr = { type = "number", default = 5e-8, exclusive_min = 0.0, max = 1.0, doc = "eQTL p-value threshold used to select the top instrument for SMR" }
+peqtl_heidi = { type = "number", default = 1.5654e-3, exclusive_min = 0.0, max = 1.0, doc = "eQTL p-value threshold used to select SNPs for HEIDI" }
+heidi_mtd = { type = "int", default = 1, min = 0.0, max = 1.0, doc = "HEIDI method: 0 is the original approach and 1 is the current default" }
+heidi_min_m = { type = "int", default = 3, exclusive_min = 0.0, doc = "Minimum number of cis-SNPs required to run HEIDI; must not exceed heidi_max_m" }
+heidi_max_m = { type = "int", default = 20, doc = "Maximum number of eQTLs used in HEIDI after LD pruning" }
+ld_lower_limit = { type = "number", default = 0.05, exclusive_min = 0.0, exclusive_max = 1.0, doc = "Lower LD r-squared pruning limit for HEIDI; must be below ld_upper_limit" }
+ld_upper_limit = { type = "number", default = 0.9, exclusive_min = 0.0, exclusive_max = 1.0, doc = "Upper LD r-squared pruning limit for HEIDI" }
+cis_wind_kb = { type = "int", default = 2000, exclusive_min = 0.0, doc = "cis-eQTL window centered on each probe, in kilobases" }
+max_num_ld = { type = "int", default = 500, min = 500.0, max = 10000.0, doc = "Number of top SNPs considered during HEIDI LD pruning" }
+diff_freq = { type = "number", default = 0.2, exclusive_min = 0.0, max = 1.0, doc = "Maximum allele-frequency difference allowed between datasets" }
+diff_freq_prop = { type = "number", default = 0.05, exclusive_min = 0.0, max = 1.0, doc = "Maximum proportion of SNPs that may be excluded by allele-frequency QC" }
+thread_num = { type = "int", default = 1, min = 1.0, max = 1024.0, doc = "OpenMP thread count used by SMR" }
+
+[nodes.command]
+interpreter = "sh"
+script_file = "scripts/smr_heidi_eqtlgen.sh"
+
+[nodes.command.env]
+SMR_CHR = "{{ chr }}"
+SMR_MAF = "{{ maf }}"
+SMR_PEQTL_SMR = "{{ peqtl_smr }}"
+SMR_PEQTL_HEIDI = "{{ peqtl_heidi }}"
+SMR_HEIDI_MTD = "{{ heidi_mtd }}"
+SMR_HEIDI_MIN_M = "{{ heidi_min_m }}"
+SMR_HEIDI_MAX_M = "{{ heidi_max_m }}"
+SMR_LD_LOWER_LIMIT = "{{ ld_lower_limit }}"
+SMR_LD_UPPER_LIMIT = "{{ ld_upper_limit }}"
+SMR_CIS_WIND_KB = "{{ cis_wind_kb }}"
+SMR_MAX_NUM_LD = "{{ max_num_ld }}"
+SMR_DIFF_FREQ = "{{ diff_freq }}"
+SMR_DIFF_FREQ_PROP = "{{ diff_freq_prop }}"
+SMR_THREAD_NUM = "{{ thread_num }}"
